@@ -61,7 +61,7 @@ spec:
       - name: node
         image: node:latest
         command: ["/usr/local/bin/node"]
-        args: ["/node"]
+        args: [ "/node"]
         ports:
         - containerPort: 8080
         volumeMounts:

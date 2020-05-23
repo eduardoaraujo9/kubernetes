@@ -1,2 +1,2 @@
-# kubernetes
-My Recipes
+# Kubernetes
+My Yummy Recipes :D

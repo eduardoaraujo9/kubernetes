@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml : |
+    global:
+      scrape_interval:     10s
+      evaluation_interval: 20s
+    rule_files:
+      - 'alert.rules'
+    scrape_configs:
+      - job_name: 'prometheus'
+        scrape_interval: 5s
+        static_configs:
+             - targets: ['localhost:9090']
+      - job_name: 'node'
+        scrape_interval: 5s
+        static_configs:
+             - targets: ['192.168.0.5:9100','192.168.0.6:9100','192.168.0.7:9100']
+      - job_name: 'netdata'
+        metrics_path: '/api/v1/allmetrics'
+        params:
+          format: [prometheus]
+        honor_labels: true
+        scrape_interval: 5s
+        static_configs:
+             - targets: ['192.168.0.6:19999','192.168.0.7:19999']
+
+  alert.rules : |
+    groups:
+    - name: example
+      rules:
+
+      # Alert for any instance that is unreachable for >5 minutes.
+      - alert: service_down
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Instance {{ $labels.instance }} down"
+          description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 2 minutes."
+
+      - alert: high_load
+        expr: node_load1 > 0.5
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Instance {{ $labels.instance }} under high load"
+          description: "{{ $labels.instance }} of job {{ $labels.job }} is under high load."
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: prometheus
+spec:
+  capacity:
+    storage: 100Gi # This size is used to match a volume to a tenents claim
+  accessModes:
+    - ReadWriteOnce # Access modes are defined below
+  persistentVolumeReclaimPolicy: Recycle # Reclaim policies are defined below 
+  nfs:
+    server: 192.168.0.6 # Please change this to your NFS server
+    path: /storage/db/prometheus # Please change this to the relevant share
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce # Access modes for volumes is defined under Persistent Volumes
+  resources:
+    requests:
+      storage: 100Gi # volume size requested
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app: prometheus
+  type: NodePort
+  ports:
+  - port: 9090
+    nodePort: 30082
+    targetPort: 9090
+    protocol: TCP
+    name: http
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      volumes:
+      - name: prometheus
+        persistentVolumeClaim:
+         claimName: prometheus
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus
+          mountPath: /prometheus
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+

@@ -1,0 +1,199 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: php
+  labels:
+    tier: backend
+spec:
+  selector:
+    app: php
+    tier: backend
+  ports:
+  - protocol: TCP
+    port: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  #labels:
+  #  tier: backend
+spec:
+  selector:
+    app: nginx
+  #  tier: backend
+  type: NodePort
+  ports:
+  - port: 80
+    nodePort: 30080
+    targetPort: 80
+    protocol: TCP
+    name: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  config : |
+    server {
+      index index.php index.html;
+      error_log  /var/log/nginx/error.log;
+      access_log /var/log/nginx/access.log;
+      root /usr/share/nginx/html;
+
+      location ~ ^/(status|ping)$ {
+          fastcgi_pass php:9000;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+          fastcgi_param PATH_INFO $fastcgi_path_info;
+          fastcgi_param SERVER_NAME $hostname;
+          include fastcgi_params;
+      }
+
+      #location / {
+      #    try_files $uri $uri/ /index.php?$query_string;
+      #} #removed to avoid 404 on favicon redirect to index.php
+
+      location ~ \.php$ {
+          try_files $uri =404;
+          fastcgi_split_path_info ^(.+\.php)(/.+)$;
+          fastcgi_pass php:9000;
+          fastcgi_index index.php;
+          include fastcgi_params;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+          fastcgi_param PATH_INFO $fastcgi_path_info;
+          fastcgi_param SERVER_NAME $hostname;
+          fastcgi_param pm.status_path /status;
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: php-www-config
+data:
+  zzz-www.conf : |
+    [www]
+    pm.status_path = /status
+    ping.path = /ping
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-liveness-probe
+data:
+  .nginxLivenessProbeTest.html : |
+    <html><body><h1>alive</h1></body></html>
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nginx-html
+spec:
+  capacity:
+    storage: 50Gi # This size is used to match a volume to a tenents claim
+  accessModes:
+    - ReadOnlyMany # Access modes are defined below
+  persistentVolumeReclaimPolicy: Recycle # Reclaim policies are defined below 
+  nfs:
+    server: 192.168.0.6 # Please change this to your NFS server
+    path: /storage/web # Please change this to the relevant share
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-html
+  namespace: default
+spec:
+  accessModes:
+    - ReadOnlyMany # Access modes for volumes is defined under Persistent Volumes
+  resources:
+    requests:
+      storage: 50Gi # volume size requested
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: nginx
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 2 # tells deployment to run 2 pods matching the template
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      volumes:
+      - name: nginx-html
+        persistentVolumeClaim:
+         claimName: nginx-html
+      - name: config
+        configMap:
+          name: nginx-config
+          items:
+          - key: config
+            path: php.conf
+      - name: nginx-liveness-probe
+        configMap:
+          name: nginx-liveness-probe
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /.nginxLivenessProbeTest.html
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 3
+        volumeMounts:
+        - name: nginx-html
+          mountPath: /usr/share/nginx/html
+        - name: config
+          mountPath: /etc/nginx/conf.d
+        - name: nginx-liveness-probe
+          mountPath: /usr/share/nginx/html/.nginxLivenessProbeTest.html
+          subPath: .nginxLivenessProbeTest.html
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: php
+  labels:
+    tier: backend
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: php
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: php
+        tier: backend
+    spec:
+      volumes:
+      - name: nginx-html
+        persistentVolumeClaim:
+          claimName: nginx-html
+      - name: php-www-config
+        configMap:
+          name: php-www-config
+      containers:
+      - name: php
+        image: php:7-fpm
+        livenessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 15
+          periodSeconds: 3
+        volumeMounts:
+        - name: nginx-html
+          mountPath: /usr/share/nginx/html
+        - name: php-www-config
+          mountPath: /usr/local/etc/php-fpm.d/zzz-www.conf
+          subPath: zzz-www.conf

@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: node
+spec:
+  selector:
+    app: node
+  type: NodePort
+  ports:
+  - port: 8080
+    nodePort: 30084
+    targetPort: 8080
+    protocol: TCP
+    name: http
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: node-web
+spec:
+  capacity:
+    storage: 50Gi # This size is used to match a volume to a tenents claim
+  accessModes:
+    - ReadOnlyMany # Access modes are defined below
+  persistentVolumeReclaimPolicy: Recycle # Reclaim policies are defined below 
+  nfs:
+    server: 192.168.0.6 # Please change this to your NFS server
+    path: /storage/node # Please change this to the relevant share
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: node-web
+  namespace: default
+spec:
+  accessModes:
+    - ReadOnlyMany # Access modes for volumes is defined under Persistent Volumes
+  resources:
+    requests:
+      storage: 50Gi # volume size requested
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: node
+spec:
+  selector:
+    matchLabels:
+      app: node
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: node
+    spec:
+      volumes:
+      - name: node-web
+        persistentVolumeClaim:
+         claimName: node-web
+      containers:
+      - name: node
+        image: node:latest
+        command: ["/usr/local/bin/node"]
+        args: ["/node"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: node-web
+          mountPath: /node
+---

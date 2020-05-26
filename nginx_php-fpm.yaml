@@ -2,12 +2,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: php
-  labels:
-    tier: backend
 spec:
   selector:
     app: php
-    tier: backend
   ports:
   - protocol: TCP
     port: 9000
@@ -16,12 +13,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nginx
-  #labels:
-  #  tier: backend
 spec:
   selector:
     app: nginx
-  #  tier: backend
   type: NodePort
   ports:
   - port: 80
@@ -91,13 +85,13 @@ metadata:
   name: nginx-html
 spec:
   capacity:
-    storage: 50Gi # This size is used to match a volume to a tenents claim
+    storage: 50Gi
   accessModes:
-    - ReadOnlyMany # Access modes are defined below
-  persistentVolumeReclaimPolicy: Recycle # Reclaim policies are defined below 
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Recycle
   nfs:
-    server: 192.168.0.6 # Please change this to your NFS server
-    path: /storage/web # Please change this to the relevant share
+    server: 192.168.0.6
+    path: /storage/web
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -106,12 +100,12 @@ metadata:
   namespace: default
 spec:
   accessModes:
-    - ReadOnlyMany # Access modes for volumes is defined under Persistent Volumes
+    - ReadOnlyMany
   resources:
     requests:
-      storage: 50Gi # volume size requested
+      storage: 50Gi
 ---
-apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx
@@ -119,7 +113,7 @@ spec:
   selector:
     matchLabels:
       app: nginx
-  replicas: 2 # tells deployment to run 2 pods matching the template
+  replicas: 2
   template:
     metadata:
       labels:
@@ -162,19 +156,15 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: php
-  labels:
-    tier: backend
 spec:
   replicas: 4
   selector:
     matchLabels:
       app: php
-      tier: backend
   template:
     metadata:
       labels:
         app: php
-        tier: backend
     spec:
       volumes:
       - name: nginx-html
@@ -197,3 +187,83 @@ spec:
         - name: php-www-config
           mountPath: /usr/local/etc/php-fpm.d/zzz-www.conf
           subPath: zzz-www.conf
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: php
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
